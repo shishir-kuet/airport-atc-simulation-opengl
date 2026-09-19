@@ -1,0 +1,16 @@
+# Build output
+build/
+cmake-build-*/
+*.exe
+*.obj
+*.o
+
+# Editor / IDE settings
+.vscode/
+.idea/
+*.swp
+
+# GLFW: keep only what the MinGW build needs (include/ and lib-mingw-w64/)
+glfw/docs/
+glfw/lib-vc*/
+glfw/lib-static-ucrt/
