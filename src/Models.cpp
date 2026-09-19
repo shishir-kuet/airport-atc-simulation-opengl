@@ -7,13 +7,19 @@ static Mat4 alongMinusX() { return rotateZ(90.0f); }    // local +Y -> world -X
 // ============================================================================
 // Airplane (twin-engine airliner)
 // ============================================================================
-void drawAirplane(const Renderer& r, const Primitives& p, const Mat4& base, float gear)
+void drawAirplane(const Renderer& r, const Primitives& p, const Mat4& base, float gear, bool cockpitView)
 {
     const float fold = (1.0f - gear) * 90.0f;   // landing gear retraction angle
-    // Fuselage: long cylinder, ellipsoid nose, tapered tail cone.
-    r.drawPart(p.cylinder, base * alongPlusX() * scale(1.2f, 8.0f, 1.2f));
-    r.drawPart(p.sphere,   base * translate(4.0f, 0.0f, 0.0f) * scale(2.2f, 1.2f, 1.2f));
-    r.drawPart(p.frustum,  base * translate(-5.4f, 0.0f, 0.0f) * alongMinusX() * scale(1.2f, 2.8f, 1.2f));
+
+    // Fuselage: long cylinder, ellipsoid nose, tapered tail cone. Skipped in
+    // the cockpit view (the pilot's eye is inside it) so that looking back or
+    // down shows the wings, engines and tail.
+    if (!cockpitView)
+    {
+        r.drawPart(p.cylinder, base * alongPlusX() * scale(1.2f, 8.0f, 1.2f));
+        r.drawPart(p.sphere,   base * translate(4.0f, 0.0f, 0.0f) * scale(2.2f, 1.2f, 1.2f));
+        r.drawPart(p.frustum,  base * translate(-5.4f, 0.0f, 0.0f) * alongMinusX() * scale(1.2f, 2.8f, 1.2f));
+    }
 
     for (float side : {1.0f, -1.0f})   // +Z = right, -Z = left (mirrored)
     {
@@ -51,19 +57,19 @@ void drawAirplane(const Renderer& r, const Primitives& p, const Mat4& base, floa
 // ============================================================================
 // Helicopter
 // ============================================================================
-void drawHelicopter(const Renderer& r, const Primitives& p, const Mat4& base, float rotorAngle, bool rotorOnly)
+void drawHelicopter(const Renderer& r, const Primitives& p, const Mat4& base, float rotorAngle, bool cockpitView)
 {
     // Main rotor: mast, hub and four blades spinning around the Y axis.
     Mat4 hub = base * translate(0.0f, 1.95f, 0.0f);
     r.drawPart(p.cylinder, hub * scale(0.5f, 0.2f, 0.5f));
     for (int i = 0; i < 4; ++i)
         r.drawPart(p.cube, hub * rotateY(rotorAngle + i * 90.0f) * translate(2.25f, 0.0f, 0.0f) * scale(4.2f, 0.05f, 0.3f));
-    if (rotorOnly)
-        return;   // cockpit view: the pilot sits inside the cabin
     r.drawPart(p.cylinder, base * translate(0.0f, 1.6f, 0.0f) * scale(0.18f, 0.6f, 0.18f));
 
-    // Cabin, engine housing and tail boom.
-    r.drawPart(p.sphere,  base * translate(0.3f, 0.0f, 0.0f) * scale(3.4f, 2.2f, 2.0f));
+    // Cabin (not drawn from the cockpit: the pilot sits inside it),
+    // engine housing and tail boom.
+    if (!cockpitView)
+        r.drawPart(p.sphere, base * translate(0.3f, 0.0f, 0.0f) * scale(3.4f, 2.2f, 2.0f));
     r.drawPart(p.cube,    base * translate(-0.3f, 1.1f, 0.0f) * scale(1.8f, 0.5f, 1.0f));
     r.drawPart(p.frustum, base * translate(-3.5f, 0.35f, 0.0f) * alongMinusX() * scale(0.7f, 5.0f, 0.7f));
 

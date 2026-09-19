@@ -11,13 +11,15 @@
 
 // Nose points to +X, up is +Y. Origin at fuselage centre; wheels touch y = -1.78.
 // gear: 1 = landing gear down, 0 = fully retracted.
-void drawAirplane(const Renderer& r, const Primitives& p, const Mat4& base, float gear = 1.0f);
+// cockpitView: leave out the fuselage (the camera is inside it).
+void drawAirplane(const Renderer& r, const Primitives& p, const Mat4& base, float gear = 1.0f,
+                  bool cockpitView = false);
 
 // Nose points to +X, up is +Y. Origin at cabin centre; skids touch y = -1.52.
 // rotorAngle (degrees) spins the main and tail rotors.
-// rotorOnly: draw just the main rotor (seen from the cockpit).
+// cockpitView: leave out the cabin (the camera is inside it).
 void drawHelicopter(const Renderer& r, const Primitives& p, const Mat4& base, float rotorAngle,
-                    bool rotorOnly = false);
+                    bool cockpitView = false);
 
 // ---- Rocket ----------------------------------------------------------------------
 

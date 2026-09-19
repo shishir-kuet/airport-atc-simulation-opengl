@@ -29,7 +29,7 @@ struct CameraView
     int follow;   // vehicle to follow (0 plane, 1 heli, 2 rocket) or -1 for a fixed view
 };
 
-// Preset views selected with the number keys 0-5.
+// Preset views selected with the number keys 0-6.
 const CameraView VIEWS[] = {
     {"Overview",   {15.0f, 0.0f, -3.0f},                    150.0f, 200.0f, 35.0f, -1},
     {"Airplane",   {},                                       30.0f, 200.0f, 20.0f,  0},
@@ -37,6 +37,7 @@ const CameraView VIEWS[] = {
     {"Rocket",     {},                                       45.0f, 240.0f, 12.0f,  2},
     {"Runway",     Layout::RUNWAY_CENTER,                    95.0f, 160.0f, 30.0f, -1},
     {"ATC Tower",  {Layout::TOWER_POS.x, 16.0f, Layout::TOWER_POS.z}, 34.0f, 200.0f, 12.0f, -1},
+    {"Rocket base", {Layout::ROCKET_BASE_POS.x, 4.0f, Layout::ROCKET_BASE_POS.z}, 70.0f, 200.0f, 25.0f, -1},
 };
 
 struct OrbitCamera
@@ -109,6 +110,7 @@ struct AppState
     bool cockpit = false;      // first-person view from the followed vehicle
     float headYaw = 0.0f;      // looking around inside the cockpit (degrees)
     float headPitch = 0.0f;
+    float cockpitFov = 60.0f;  // cockpit field of view (scroll / W, S to change)
 
     bool dragging = false;
     double lastX = 0, lastY = 0;
@@ -150,8 +152,12 @@ static void lookAround(float dYaw, float dPitch)
 {
     if (app.cockpit)
     {
-        app.headYaw = std::clamp(app.headYaw + dYaw, -150.0f, 150.0f);
-        app.headPitch = std::clamp(app.headPitch + dPitch, -80.0f, 80.0f);
+        // Turn the head all the way round (e.g. out of the side window to
+        // see the airport below); + yaw = look left, + pitch = look up.
+        app.headYaw += dYaw;
+        while (app.headYaw > 180.0f)  app.headYaw -= 360.0f;
+        while (app.headYaw < -180.0f) app.headYaw += 360.0f;
+        app.headPitch = std::clamp(app.headPitch + dPitch, -85.0f, 85.0f);
     }
     else
     {
@@ -199,10 +205,11 @@ static void printControls()
               << "  R                       : reset everything to the start\n"
               << "  0                       : overview of the whole airport\n"
               << "  1 / 2 / 3               : follow Airplane / Helicopter / Rocket\n"
-              << "  4 / 5                   : Runway / ATC tower\n"
+              << "  4 / 5 / 6               : Runway / ATC tower / Rocket base\n"
               << "  C                       : cockpit view of the followed vehicle (on / off)\n"
-              << "  Mouse drag / Arrow keys : orbit camera (in the cockpit: look around)\n"
-              << "  Scroll / W, S           : zoom in / out\n"
+              << "  Mouse drag / Arrow keys : orbit camera (cockpit: look around 360, e.g. down at the airport)\n"
+              << "  Scroll / W, S           : zoom in / out (cockpit: field of view)\n"
+              << "  V                       : cockpit: look straight ahead again\n"
               << "  F                       : toggle wireframe / solid\n"
               << "  Space                   : pause / resume\n"
               << "  + / -                   : simulation speed x1 / x2 / x4 / x8\n"
@@ -216,7 +223,7 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int)
     if (action != GLFW_PRESS)
         return;
 
-    if (key >= GLFW_KEY_0 && key <= GLFW_KEY_5)
+    if (key >= GLFW_KEY_0 && key <= GLFW_KEY_6)
     {
         selectView(key - GLFW_KEY_0);
         return;
@@ -227,6 +234,10 @@ static void keyCallback(GLFWwindow* window, int key, int, int action, int)
     case GLFW_KEY_ESCAPE: glfwSetWindowShouldClose(window, true); break;
     case GLFW_KEY_F:      app.renderer.wireframe = !app.renderer.wireframe; break;
     case GLFW_KEY_C:      toggleCockpit(); break;
+    case GLFW_KEY_V:      // cockpit: look straight ahead again, normal zoom
+        app.headYaw = app.headPitch = 0.0f;
+        app.cockpitFov = 60.0f;
+        break;
     case GLFW_KEY_SPACE:  app.paused = !app.paused; break;
     case GLFW_KEY_EQUAL:
     case GLFW_KEY_KP_ADD:      app.timeScale = std::min(8, app.timeScale * 2); break;
@@ -257,17 +268,35 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int)
     }
 }
 
-static void cursorPosCallback(GLFWwindow*, double x, double y)
+static void cursorPosCallback(GLFWwindow* window, double x, double y)
 {
+    // Check the real button state: if the release happened while the window
+    // was not focused, the release event is lost and the drag would get stuck.
+    app.dragging = app.dragging && glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS
+                   && glfwGetWindowAttrib(window, GLFW_FOCUSED);
     if (app.dragging)
-        lookAround(float(app.lastX - x) * 0.3f, float(y - app.lastY) * 0.3f);
+    {
+        // In the cockpit, dragging down looks down (like a game camera).
+        float dy = float(y - app.lastY) * 0.3f;
+        lookAround(float(app.lastX - x) * 0.3f, app.cockpit ? -dy : dy);
+    }
     app.lastX = x;
     app.lastY = y;
 }
 
+// Cockpit zoom: a narrower field of view zooms in, a wider one shows more of
+// the ground (from the sky the whole airport fits in the view).
+static void cockpitZoom(float factor)
+{
+    app.cockpitFov = std::clamp(app.cockpitFov * factor, 30.0f, 100.0f);
+}
+
 static void scrollCallback(GLFWwindow*, double, double yOffset)
 {
-    app.camera.zoom(yOffset > 0 ? 0.9f : 1.1f);
+    if (app.cockpit)
+        cockpitZoom(yOffset > 0 ? 0.92f : 1.08f);
+    else
+        app.camera.zoom(yOffset > 0 ? 0.9f : 1.1f);
 }
 
 static void framebufferSizeCallback(GLFWwindow*, int width, int height)
@@ -278,24 +307,37 @@ static void framebufferSizeCallback(GLFWwindow*, int width, int height)
 // Continuous (held-key) camera controls.
 static void processHeldKeys(GLFWwindow* window, float dt)
 {
-    const float orbitSpeed = 70.0f * dt;
-    if (glfwGetKey(window, GLFW_KEY_LEFT)  == GLFW_PRESS) lookAround(-orbitSpeed, 0);
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) lookAround(orbitSpeed, 0);
-    if (glfwGetKey(window, GLFW_KEY_UP)    == GLFW_PRESS) lookAround(0, orbitSpeed);
-    if (glfwGetKey(window, GLFW_KEY_DOWN)  == GLFW_PRESS) lookAround(0, -orbitSpeed);
-    if (glfwGetKey(window, GLFW_KEY_W)     == GLFW_PRESS) app.camera.zoom(1.0f - 1.5f * dt);
-    if (glfwGetKey(window, GLFW_KEY_S)     == GLFW_PRESS) app.camera.zoom(1.0f + 1.5f * dt);
+    // In the cockpit the arrows turn the pilot's head: left arrow looks left.
+    const float speed = (app.cockpit ? 90.0f : 70.0f) * dt;
+    const float left = app.cockpit ? speed : -speed;
+    if (glfwGetKey(window, GLFW_KEY_LEFT)  == GLFW_PRESS) lookAround(left, 0);
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) lookAround(-left, 0);
+    if (glfwGetKey(window, GLFW_KEY_UP)    == GLFW_PRESS) lookAround(0, speed);
+    if (glfwGetKey(window, GLFW_KEY_DOWN)  == GLFW_PRESS) lookAround(0, -speed);
+
+    bool zoomIn = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
+    bool zoomOut = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
+    if (app.cockpit)
+    {
+        if (zoomIn)  cockpitZoom(1.0f - 1.0f * dt);
+        if (zoomOut) cockpitZoom(1.0f + 1.0f * dt);
+    }
+    else
+    {
+        if (zoomIn)  app.camera.zoom(1.0f - 1.5f * dt);
+        if (zoomOut) app.camera.zoom(1.0f + 1.5f * dt);
+    }
 }
 
 // ---- Drawing -----------------------------------------------------------------
 
-// cockpitVehicle: the vehicle we are sitting in (-1 = none). From inside the
-// airplane its body would block the view, so it is not drawn; in the
-// helicopter only the spinning rotor overhead is visible.
+// cockpitVehicle: the vehicle we are sitting in (-1 = none). Its body (the
+// fuselage or cabin around the camera) is left out so it doesn't block the
+// view, but the wings, engines, tail, skids and rotor stay visible when the
+// pilot looks around.
 static void drawVehicles(const Renderer& r, const Primitives& p, const Simulation& sim, int cockpitVehicle)
 {
-    if (cockpitVehicle != 0)
-        drawAirplane(r, p, sim.airplaneMatrix(), sim.plane.gear);
+    drawAirplane(r, p, sim.airplaneMatrix(), sim.plane.gear, cockpitVehicle == 0);
     drawHelicopter(r, p, sim.helicopterMatrix(), sim.heli.rotorAngle, cockpitVehicle == 1);
 
     const RocketMotion& k = sim.rocket;
@@ -311,6 +353,20 @@ static void drawVehicles(const Renderer& r, const Primitives& p, const Simulatio
     if (!k.boostersAttached)   // flying back / landed on their landing zones
         for (int i = 0; i < 2; ++i)
             drawRocketBooster(r, p, sim.boosterMatrix(i), k.boosters[i].flame * flicker, k.boosters[i].legs);
+
+    // Two recovered rockets already standing on their legs at the rocket base;
+    // the free pad in between is where the returning core lands.
+    RocketLook parked;
+    parked.boosters = false;
+    parked.legs = 1.0f;
+    const float standY = Layout::LANDING_ZONE_TOP - legFootY(CORE_LEGS);
+    for (int i = 0; i < 3; ++i)
+    {
+        if (i == Layout::ROCKET_BASE_FREE_PAD)
+            continue;
+        const Vec3& pad = Layout::ROCKET_BASE_PADS[i];
+        drawRocket(r, p, translate(pad.x, standY, pad.z) * rotateY(i * 30.0f), parked);
+    }
 }
 
 // Instrument readings shown on the cockpit panel.
@@ -499,7 +555,7 @@ int main()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // The cockpit uses a wider field of view, like a pilot's eyes.
-        float fov = inCockpit ? 60.0f : 45.0f;
+        float fov = inCockpit ? app.cockpitFov : 45.0f;
         Mat4 projection = perspective(fov, float(width) / float(height), 0.5f, 5000.0f);
         app.renderer.setCamera(inCockpit ? cockpitView() : app.camera.view(), projection);
 
@@ -512,6 +568,7 @@ int main()
         drawLaunchPad(app.renderer, primitives,
                       translate(Layout::LAUNCH_PAD_POS.x, Layout::LAUNCH_PAD_POS.y, Layout::LAUNCH_PAD_POS.z),
                       app.sim.rocket.armSwing);
+        drawRocketBase(app.renderer, primitives);
         for (int i = 0; i < 2; ++i)
             drawLandingZone(app.renderer, primitives,
                             translate(Layout::LANDING_ZONE[i].x, Layout::LANDING_ZONE[i].y, Layout::LANDING_ZONE[i].z), i + 1);
