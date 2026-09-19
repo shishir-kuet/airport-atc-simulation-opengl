@@ -4,7 +4,7 @@ An interactive 3D simulation of an airport with **Air Traffic Control (ATC)**. T
 
 - an **airplane** taxis, takes off, holds, lands and parks
 - a **helicopter** lifts off from a helipad and lands back on it
-- a **reusable rocket** launches, and its boosters and core fly back and land at the airport
+- a **rocket** launches and separates twice; the spent parts fall away and the final stage flies back and lands at the airport
 
 Written in modern C++17 with the OpenGL 3.3 core profile, GLFW and GLAD. There are no other libraries: all math, geometry and simulation are implemented from scratch.
 
@@ -40,7 +40,7 @@ Written in modern C++17 with the OpenGL 3.3 core profile, GLFW and GLAD. There a
 |---|---|
 | ✈️ **Airplane** (twin-engine airliner) | Parking → *Pushback* → Taxi → Hold Short → Runway Entry (line-up) → Acceleration → Rotation → Climb (gear retracts) → Cruise/Hold → Approach (downwind, base) → Descent (localizer + glide slope, gear down) → Flare → Touchdown → Taxi In → Parking (nose-in) |
 | 🚁 **Helicopter** | Parked → Engine start (rotor spool-up) → Lift-off → Hover (pedal turn) → Transition (nose down) → Climb → Cruise/Hold → Approach (decelerating, nose up) → Landing (vertical) → Shutdown |
-| 🚀 **Rocket** (reusable, two side boosters) | Countdown (service arms swing away) → Ignition → Liftoff → Gravity turn → **Booster separation** (boosters fly back to LZ-1 / LZ-2) → Main engine cut-off → Flip → Boostback burn → Coast → Entry burn → Landing burn (legs deploy) → Landed on pad 4 of the **rocket base**, between two recovered rockets |
+| 🚀 **Rocket** (two stages + two side boosters) | Countdown (service arms swing away) → Ignition → Liftoff → Gravity turn → **Booster separation** (the empty boosters fall away) → **Stage separation** (the empty first stage falls away) → the second stage lights its own engine, flies a faster, higher trajectory, then flips, burns back and lands on pad 4 of the **rocket base** |
 
 ### Airport environment
 
@@ -54,7 +54,6 @@ Written in modern C++17 with the OpenGL 3.3 core profile, GLFW and GLAD. There a
 - **Launch complex**:
   - an octagonal pad with a ramp and flame trench
   - the launch mount, a lattice service tower with swing-away arms, and a propellant tank
-- **Two booster landing zones**, LZ-1 and LZ-2.
 - **Rocket base** east of the launch pad: three landing pads (3, 4, 5) and a recovery hangar. Two recovered rockets stand on pads 3 and 5; pad 4 is kept free for the returning rocket.
 
 ### Effects, ATC and cameras
@@ -109,7 +108,7 @@ The build copies `glfw3.dll` next to the executable automatically.
 | **Enter** | Start all three |
 | **R** | Reset everything |
 | **0** | Overview of the whole airport |
-| **1 / 2 / 3** | Follow the airplane / helicopter / rocket |
+| **1 / 2 / 3** | Follow the airplane / helicopter / rocket (after stage separation: the second stage) |
 | **4 / 5 / 6** | Runway view / ATC tower view / Rocket base view |
 | **C** | Cockpit view of the followed vehicle (on/off) |
 | Mouse drag / Arrow keys | Orbit the camera. In the cockpit: look around 360° (out of the side windows, back at your own aircraft, down at the airport) |
@@ -174,7 +173,7 @@ flowchart TB
 
 - **Separation of simulation and drawing.**
   - `Simulation` only knows positions, orientations and states, and makes no OpenGL calls.
-  - It exposes a *world matrix* for each vehicle, for example `airplaneMatrix()` or `boosterMatrix(i)`.
+  - It exposes a *world matrix* for each vehicle, for example `airplaneMatrix()` or `upperStageMatrix()`.
   - `main.cpp` passes that matrix to the drawing functions.
 - **One set of shared primitives.** Every object in the world is built by transforming 12 unit-sized meshes, which are uploaded to the GPU once.
 - **Data-driven layout.** All positions of airport facilities live in `namespace Layout` (`Environment.h`). The simulation's routes and targets are derived from those constants, so moving the helipad also moves the helicopter's landing target.
@@ -188,8 +187,8 @@ flowchart TB
 | **Mesh** | `Mesh.h/.cpp` | GPU upload (VAO/VBO/EBO) and procedural generators: cube, sphere, cylinder/cone/frustum, tube (ring), tapered wing slab, grid |
 | **Primitives** | `Primitives.h/.cpp` | Creates the shared unit meshes once: `cube, sphere, cylinder, cone, frustum, frustumWide, octagon, ringThin, ringThick, wing, fin, smoke` |
 | **Renderer** | `Renderer.h/.cpp` | GLSL shaders; `drawPart` (solid + outline edges), `drawSolid` (flames, smoke), `drawLines` (grid); wireframe mode |
-| **Models** | `Models.h/.cpp` | Hierarchical models: airplane (folding gear), helicopter (rotors), rocket (boosters, flames, landing legs) |
-| **Environment** | `Environment.h/.cpp` | `Layout` constants; ground, runway, taxiways, apron, terminal, tower, helipad, launch pad, booster landing zones, rocket base |
+| **Models** | `Models.h/.cpp` | Hierarchical models: airplane (folding gear), helicopter (rotors), rocket (separable boosters and stages, flames, landing legs) |
+| **Environment** | `Environment.h/.cpp` | `Layout` constants; ground, runway, taxiways, apron, terminal, tower, helipad, launch pad, rocket base |
 | **Simulation** | `Simulation.h/.cpp` | Vehicle state machines, guidance laws, ATC/pilot radio, rocket stage return, smoke particles |
 | **Application** | `main.cpp` | GLFW window, input callbacks, orbit/follow/cockpit cameras, cockpit instrument panel, frame loop |
 
@@ -205,11 +204,11 @@ sequenceDiagram
     loop timeScale times
         App->>Sim: update(dt)
         Sim->>Sim: airplane, helicopter, rocket state machines
-        Sim->>Sim: boosters, smoke puffs
+        Sim->>Sim: falling spent parts, smoke puffs
     end
     App->>Cam: follow target or cockpit eye from vehicle matrix
     App->>R: setCamera(view, projection)
-    App->>R: ground, grid, airport, helipad, launch pad, LZs, rocket base
+    App->>R: ground, grid, airport, helipad, launch pad, rocket base
     App->>R: vehicles (own vehicle hidden in cockpit)
     App->>R: smoke puffs
     opt cockpit view
@@ -285,7 +284,6 @@ MeshData (CPU)                         Mesh (GPU)
    │        [======== TERMINAL (z 20..28) ====]  ▲ATC   ◆ launch pad  │
    │                                            (15,22)   (75, 12)   │
    │                          rocket base: pads 3 · 4 · 5 (125, 15)  │
-   │                              LZ-2 (53, 44)       LZ-1 (97, 44)  │
    │        helicopter holding circle (centre 82, 115, r 60, alt 35) │
    └─────────────────────────────────────────────────────────────────┘
             South (+Z)            West (−X) ◄──────► East (+X)
@@ -320,7 +318,7 @@ The vehicle's own world matrix is built from its simulation state. For example, 
 ```
 airplane = T(position) · Ry(heading) · [T(pivot) · Rz(pitch) · T(−pivot)] · Rx(roll)
 rocket   = T(position) · Rz(−tiltX) · Rx(tiltZ)
-booster  = T(position) · Rz(−tiltX) · Rx(tiltZ) · Ry(index·180°)
+spent part = T(fall offset) · (matrix at separation) · [T(pivot) · Rz(−tumble) · T(−pivot)]
 ```
 
 ---
@@ -383,7 +381,9 @@ stateDiagram-v2
 - **Speed on approach.** Speed and altitude scale with the distance to the pad.
 - **Final descent.** It only descends once it is facing its parked heading.
 
-### 8.3 Rocket (reusable)
+### 8.3 Rocket (second stage returns)
+
+The rocket separates **twice**: the empty side boosters at *t* = 10 s, then the empty first stage at *t* = 20 s. These spent parts have done their job: they fall away, slowly tumbling, and are removed once they reach the ground. Only the final part, the **second stage**, flies back and lands.
 
 ```mermaid
 stateDiagram-v2
@@ -391,21 +391,23 @@ stateDiagram-v2
     OnPad --> Countdown: L
     Countdown --> Ignition: T-0
     Ignition --> Ascent: clamps released
-    Ascent --> Flip: MECO (t = 20 s)
+    Ascent --> Stage2Burn: stage separation (t = 20 s)
+    Stage2Burn --> Flip: burn, then ballistic arc to the top
     Flip --> Boostback: pointing back home
-    Boostback --> Coast: on course to the pad
+    Boostback --> Coast: on course to the rocket base
     Coast --> EntryBurn: falling fast, high up
     EntryBurn --> Coast
     Coast --> LandingBurn: just high enough to stop
-    LandingBurn --> Landed: legs on pad 4 at the rocket base
-    Landed --> OnPad: L (moved back to the pad, restacked)
+    LandingBurn --> Landed: legs down on pad 4
+    Landed --> OnPad: L (new rocket stacked)
 ```
 
-- **Side boosters.** They separate at *t* = 10 s. Each becomes its own `StageMotion` and flies Flip → Boostback → Coast → Landing Burn to **LZ-1 / LZ-2**.
-- **Core.** It returns to the **rocket base** and lands on the free pad 4 (`ROCKET_BASE_FREE_PAD`), between the two recovered rockets on pads 3 and 5, blowing dust across the pad.
+- **Booster separation (t = 10 s).** The two empty boosters are pushed off sideways and fall away (`Debris`).
+- **Stage separation (t = 20 s).** The main engine cuts off, and the empty first stage falls away behind the rocket.
+- **Second stage.** After a 1 s coast its own engine lights and it accelerates faster than the heavy first stage did, on a steep, lofted trajectory up to about 1,700 units high. It then flips, burns back, and lands on its own landing legs on the free pad 4 (`ROCKET_BASE_FREE_PAD`) of the **rocket base**, between the two recovered rockets on pads 3 and 5. The landing burn blows dust across the pad.
 - **Boostback targeting.** The required sideways velocity is `distance to target ÷ predicted fall time`, and the engine pushes the stage towards it.
-- **Landing burn ("suicide burn").** It starts at height `v² / 2(a − g)`. The allowed descent speed is `√(2(a − g)·h)`, so the stage reaches zero speed at the pad.
-- **Result.** In testing all three stages touch down within 0.3 units of their targets at 1 unit/s.
+- **Landing burn ("suicide burn").** It starts at height `v² / 2(a − g)`. The allowed descent speed is `√(2(a − g)·h)`, so the stage reaches zero speed at the pad. Sideways, it brakes evenly too, so it stops right over the pad.
+- **Result.** In testing, the second stage touches down within about 0.2 units of the pad centre at 1 unit/s.
 
 ### 8.4 ATC
 
@@ -430,7 +432,7 @@ Traffic is separated **vertically**: the airplane holds at 60 over the airport a
 | **Orbit / fixed** (0, 4, 5) | Spherical coordinates (yaw, pitch, distance) around a target, turned into a view matrix with `lookAt` |
 | **Follow** (1, 2, 3) | Same orbit camera, with the target updated every frame to the vehicle's position |
 | **Cockpit** (C) | The eye point and look direction are defined **in vehicle coordinates** and transformed by the vehicle's model matrix, so the view pitches and banks with the aircraft. Head yaw/pitch let the pilot look all the way round with the arrows or mouse; from the hold, looking left and down shows the whole airport below. Around the eye the fuselage (or the helicopter cabin) is left out, so looking back shows the wings, engines and tail |
-| **Rocket onboard** (3 then C) | Camera on the side of the upper stage looking down along the body and exhaust |
+| **Rocket onboard** (3 then C) | Camera on the side of the second stage looking down along the body and exhaust |
 
 **Cockpit panel.** Its gauges read live simulation data:
 
@@ -473,7 +475,8 @@ All of these are named constants at the top of `src/Simulation.cpp`.
 | `GLIDE_SLOPE` / `FLARE_HEIGHT` | 5° / 1.5 | Approach path |
 | `PLANE_HOLD_TIME` / `HELI_HOLD_TIME` | 25 s / 20 s | Time in the hold before landing |
 | `PLANE_HOLD_ALT` / `HELI_ALTITUDE` | 60 / 35 | Holding altitudes |
-| `BOOSTER_SEP_TIME` / `MECO_TIME` | 10 s / 20 s | Rocket event times after liftoff |
+| `BOOSTER_SEP_TIME` / `STAGE_SEP_TIME` | 10 s / 20 s | Rocket separation times after liftoff |
+| `STAGE2_BURN_TIME` / `STAGE2_ACCEL` / `STAGE2_MAX_TILT` | 8 s / 12 / 25° | Second stage burn and trajectory |
 | `BOOSTBACK_ACCEL` / `LANDING_ACCEL` | 25 / 25 | Rocket engine accelerations |
 
 Airport positions are in `namespace Layout` (`src/Environment.h`). Landing-leg geometry is in `CORE_LEGS` / `BOOSTER_LEGS` (`src/Models.h`).
@@ -512,7 +515,7 @@ OpenGL Project/
 │   ├── Mesh.h / .cpp       GPU meshes + procedural primitive generators
 │   ├── Primitives.h / .cpp shared unit meshes
 │   ├── Renderer.h / .cpp   shaders and draw modes
-│   ├── Models.h / .cpp     airplane, helicopter, rocket (+ boosters, legs)
+│   ├── Models.h / .cpp     airplane, helicopter, rocket (stages, boosters, legs)
 │   ├── Environment.h / .cpp airport layout and all facilities
 │   ├── Simulation.h / .cpp state machines, guidance, ATC, rocket return, smoke
 │   └── gl.c                GLAD implementation
