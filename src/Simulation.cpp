@@ -28,11 +28,12 @@ constexpr float TOUCHDOWN_SPEED  = 11.0f;   // after the flare
 constexpr float PLANE_BANK       = 25.0f;
 constexpr float PLANE_TURN_RATE  = 12.0f;   // degrees / s at full bank
 
-// Airplane holding pattern: left-hand circle north of the runway.
-constexpr float PLANE_HOLD_X      = 0.0f;
-constexpr float PLANE_HOLD_Z      = RUNWAY_Z - 160.0f;
-constexpr float PLANE_HOLD_RADIUS = 150.0f;
-constexpr float PLANE_HOLD_ALT    = 50.0f;
+// Airplane holding pattern: left-hand circle right over the airport, so the
+// whole airport can be seen below from the cockpit.
+constexpr float PLANE_HOLD_X      = 40.0f;                 // middle of the airport
+constexpr float PLANE_HOLD_Z      = RUNWAY_Z + 35.0f;
+constexpr float PLANE_HOLD_RADIUS = 150.0f;   // wider than the tightest turn (~143)
+constexpr float PLANE_HOLD_ALT    = 60.0f;   // above the helicopter hold (35)
 constexpr float PLANE_HOLD_TIME   = 25.0f;  // seconds in the hold before approach
 
 // Landing on runway 09 (approaching from the west, flying east).
@@ -63,7 +64,7 @@ constexpr float ENTRY_BURN_ACCEL = 25.0f;
 constexpr float ENTRY_BURN_SPEED = 70.0f;   // falling speed after the entry burn
 constexpr float LANDING_ACCEL    = 25.0f;   // engine deceleration in the landing burn
 // Height of each stage's origin once standing on its deployed legs.
-const float CORE_LAND_Y    = LAUNCH_MOUNT_TOP - legFootY(CORE_LEGS);
+const float CORE_LAND_Y    = LANDING_ZONE_TOP - legFootY(CORE_LEGS);   // on a rocket-base pad
 const float BOOSTER_LAND_Y = LANDING_ZONE_TOP - legFootY(BOOSTER_LEGS);
 
 // Ground routes (x, z). `stop` = come to a smooth stop exactly on that point.
@@ -234,7 +235,7 @@ void Simulation::launchRocket()
                                                    k.boosters[1].state == RocketState::Landed);
         if (!boostersDown)
             return;
-        radio("[LAUNCH] Boosters recovered and restacked. Rocket back on the launch mount.");
+        radio("[LAUNCH] Rocket moved from the rocket base back to the launch pad, boosters restacked.");
         k = RocketMotion{};
         k.core.pos = Vec3(LAUNCH_PAD_POS.x, LAUNCH_MOUNT_TOP + ROCKET_GROUND_OFFSET, LAUNCH_PAD_POS.z);
     }
@@ -438,14 +439,18 @@ void Simulation::updateAirplane(float dt)
         // Straight ahead along the runway heading.
         fly(localizerHeading(a.pos, 0.5f, 10.0f), 7.0f, CLIMB_SPEED, 5.0f);
         retractGear();
-        if (altitude > 20.0f)
-            setState(PlaneState::CruiseHold, "[TOWER]  Airplane, turn left, climb to 50, hold north of the airport.");
+        if (altitude > 10.0f)
+            setState(PlaneState::CruiseHold, "[TOWER]  Airplane, turn left, climb to 60, hold over the airport.");
         break;
 
     case PlaneState::CruiseHold:
         fly(orbitHeading(a.pos, PLANE_HOLD_X, PLANE_HOLD_Z, PLANE_HOLD_RADIUS, 0.5f),
             std::clamp((PLANE_HOLD_ALT - altitude) * 0.3f, -4.0f, 6.0f), CRUISE_SPEED, PLANE_TURN_RATE);
         retractGear();
+        // Only time spent on the circle counts, so the aircraft really flies
+        // a lap over the airport before it is cleared to leave.
+        if (std::fabs(distanceXZ(a.pos, PLANE_HOLD_X, PLANE_HOLD_Z) - PLANE_HOLD_RADIUS) > 30.0f)
+            a.timer = 0.0f;
         if (a.timer > PLANE_HOLD_TIME)
         {
             radio("[PILOT]  Tower, airplane request landing.");
@@ -756,7 +761,8 @@ void Simulation::updateRocket(float dt)
         if (t >= MECO_TIME)
         {
             c.flame = 0;
-            c.target = Vec3(LAUNCH_PAD_POS.x, CORE_LAND_Y, LAUNCH_PAD_POS.z);
+            const Vec3& pad = ROCKET_BASE_PADS[ROCKET_BASE_FREE_PAD];
+            c.target = Vec3(pad.x, CORE_LAND_Y, pad.z);   // free pad at the rocket base
             setState(RocketState::Flip, "[LAUNCH] Main engine cut-off. Coasting up, flipping to head home.");
         }
         break;
@@ -917,7 +923,7 @@ void Simulation::updateReturningStage(StageMotion& s, float dt, bool isCore, con
             s.tiltX = s.tiltZ = 0.0f;
             s.flame = 0.0f;
             s.legs = 1.0f;
-            setState(RocketState::Landed, isCore ? "Touchdown on the launch pad. Welcome home!"
+            setState(RocketState::Landed, isCore ? "Touchdown on pad 4 at the rocket base. Welcome home!"
                                                   : "Touchdown on the landing zone.");
             return;
         }
@@ -992,6 +998,21 @@ void Simulation::updateEffects(float dt)
             Vec3 pos = LAUNCH_PAD_POS + Vec3((randomFloat() - 0.5f) * 3.0f, 1.8f, 9.0f + randomFloat() * 2.0f);
             Vec3 vel((randomFloat() - 0.5f) * 3.0f, 1.0f + randomFloat() * 1.5f, 5.0f + randomFloat() * 5.0f);
             emitPuff(pos, vel, 5.0f, 2.0f, 7.0f);
+        }
+
+        // Dust blown outwards across a landing pad by a stage's landing burn.
+        const StageMotion* landing[3] = {&c, &k.boosters[0], &k.boosters[1]};
+        for (int i = 0; i < 3; ++i)
+        {
+            const StageMotion& s = *landing[i];
+            bool flying = i == 0 || !k.boostersAttached;
+            if (!flying || s.state != RocketState::LandingBurn || s.pos.y - s.target.y > 12.0f)
+                continue;
+            float a = randomFloat() * 2.0f * PI;
+            Vec3 dir(std::cos(a), 0.0f, std::sin(a));
+            float size = i == 0 ? 1.0f : 0.6f;
+            emitPuff(Vec3(s.target.x, 0.6f, s.target.z) + dir * 1.5f,
+                     dir * (6.0f + randomFloat() * 4.0f) + Vec3(0.0f, 0.8f, 0.0f), 3.0f, 1.2f * size, 3.5f * size);
         }
     }
 
@@ -1130,11 +1151,16 @@ const char* toString(RocketState s)
 
 std::string Simulation::statusText() const
 {
+    // Rocket altitude: above the launch mount on the way up, above its
+    // landing pad on the way back.
+    const StageMotion& c = rocket.core;
+    float rocketAlt = c.state >= RocketState::Flip ? c.pos.y - c.target.y : c.pos.y - LAUNCH_MOUNT_TOP;
+
     char text[256];
     std::snprintf(text, sizeof(text),
                   "Plane: %s (spd %.0f, alt %.0f) | Heli: %s (alt %.0f) | Rocket: %s (alt %.0f)",
                   toString(plane.state), plane.speed, plane.pos.y - PLANE_GROUND_Y,
                   toString(heli.state), heli.pos.y - HELI_GROUND_Y,
-                  toString(rocket.core.state), rocket.core.pos.y - LAUNCH_MOUNT_TOP);
+                  toString(c.state), rocketAlt);
     return text;
 }
