@@ -86,8 +86,8 @@ static void paintDigit(const Renderer& r, const Primitives& p, const Mat4& frame
 
 void drawGround(const Renderer& r, const Primitives& p)
 {
-    // Large enough for the aircraft holding patterns around the airport.
-    box(r, p, Mat4::identity(), {0.0f, -0.07f, 0.0f}, {1600.0f, 0.1f, 1600.0f}, Shade::GROUND);
+    // Large enough for the holding patterns and the rocket stages flying downrange.
+    box(r, p, Mat4::identity(), {0.0f, -0.07f, 0.0f}, {5000.0f, 0.1f, 5000.0f}, Shade::GROUND);
 }
 
 // ---- Runway ----------------------------------------------------------------
