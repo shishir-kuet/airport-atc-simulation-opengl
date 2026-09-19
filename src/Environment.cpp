@@ -330,6 +330,35 @@ void drawLandingZone(const Renderer& r, const Primitives& p, const Mat4& base, i
     }
 }
 
+// ---- Rocket base -----------------------------------------------------------------
+
+void drawRocketBase(const Renderer& r, const Primitives& p)
+{
+    const Mat4 I = Mat4::identity();
+    const Vec3& c = ROCKET_BASE_POS;
+
+    // Concrete apron under the three pads.
+    box(r, p, I, {c.x, 0.05f, c.z}, {60.0f, 0.1f, 22.0f}, Shade::CONCRETE * 0.85f);
+
+    // Landing pads 3, 4 and 5.
+    for (int i = 0; i < 3; ++i)
+    {
+        const Vec3& pad = ROCKET_BASE_PADS[i];
+        drawLandingZone(r, p, translate(pad.x, pad.y, pad.z), 3 + i);
+    }
+
+    // Recovery hangar behind the pads, big door facing them (north, -Z).
+    const float hx = c.x, hz = c.z + 24.0f, w = 34.0f, d = 14.0f, h = 11.0f;
+    box(r, p, I, {hx, h / 2, hz}, {w, h, d}, Shade::BUILDING);
+    box(r, p, I, {hx, h + 0.3f, hz}, {w + 1.0f, 0.6f, d + 1.0f}, Shade::ROOF);
+    box(r, p, I, {hx, 4.5f, hz - d / 2 - 0.05f}, {22.0f, 9.0f, 0.1f}, Shade::GLASS);   // door
+    for (float x = -8.8f; x <= 8.9f; x += 4.4f)                                       // door panels
+        box(r, p, I, {hx + x, 4.5f, hz - d / 2 - 0.12f}, {0.15f, 9.0f, 0.1f}, Shade::METAL);
+
+    // Concrete path from the apron to the hangar door.
+    box(r, p, I, {hx, 0.04f, c.z + 14.0f}, {22.0f, 0.08f, 8.0f}, Shade::CONCRETE * 0.85f);
+}
+
 // ---- Rocket launch complex -----------------------------------------------------
 
 // Square lattice tower: 4 corner columns, horizontal rings and X-bracing.
