@@ -32,28 +32,36 @@ struct LegGeometry
 };
 constexpr float LEG_DEPLOY_ANGLE = 150.0f;       // swing out and down when deployed
 constexpr float COS_LEG_DEPLOY   = -0.8660254f;  // cos(150 deg)
-constexpr LegGeometry CORE_LEGS    = {4, 0.0f,  0.80f, 2.3f, 2.9f, 0.45f};
-constexpr LegGeometry BOOSTER_LEGS = {4, 45.0f, 0.35f, 1.6f, 1.8f, 0.30f};
+// The second (upper) stage uses the same frame as the whole rocket; its own
+// engine exit is at this height above the first stage's nozzle.
+constexpr float UPPER_STAGE_BOTTOM = 6.4f;
+
+constexpr LegGeometry CORE_LEGS    = {4, 0.0f,  0.80f, 2.3f, 2.9f, 0.45f};   // parked rockets
+constexpr LegGeometry UPPER_LEGS   = {4, 45.0f, 0.64f, UPPER_STAGE_BOTTOM + 1.2f, 2.2f, 0.35f};
 
 // Height of the feet below the model origin with the legs deployed
 // (hinge + leg reaching down, minus half the foot pad). Negative = below.
 constexpr float legFootY(const LegGeometry& g) { return g.hingeY + g.length * COS_LEG_DEPLOY - 0.05f; }
 
-// Which parts are attached, how strongly each engine burns (0..1) and how
-// far the core's landing legs are deployed (0..1).
+// Whether the boosters are still attached, how strongly each engine burns
+// (0..1) and how far the landing legs are deployed (0..1).
 struct RocketLook
 {
     bool boosters = true;
     float mainFlame = 0, boosterFlame = 0, legs = 0;
 };
 
-// Stands upright along +Y. Origin at the bottom of the engine nozzle.
+// The whole rocket (both stages, plus the boosters if attached), standing
+// upright along +Y. Origin at the bottom of the first stage's engine nozzle.
 void drawRocket(const Renderer& r, const Primitives& p, const Mat4& base, const RocketLook& look = {});
+
+// Separable stages, in the whole rocket's frame (origin at the first stage's nozzle).
+void drawRocketFirstStage(const Renderer& r, const Primitives& p, const Mat4& base, float thrust, float legs);
+void drawRocketUpperStage(const Renderer& r, const Primitives& p, const Mat4& base, float thrust, float legs);
 
 // Side boosters (drawn on their own after separation). Origin at the bottom of the booster.
 Mat4 rocketBoosterMatrix(const Mat4& rocketBase, int index);   // index 0 (+X side) or 1 (-X side)
-void drawRocketBooster(const Renderer& r, const Primitives& p, const Mat4& booster, float thrust,
-                       float legs = 0.0f);
+void drawRocketBooster(const Renderer& r, const Primitives& p, const Mat4& booster, float thrust);
 
 // Heights used to rest each model on the ground (y = 0).
 constexpr float AIRPLANE_GROUND_OFFSET   = 1.78f;

@@ -137,33 +137,45 @@ Mat4 rocketBoosterMatrix(const Mat4& rocketBase, int index)
     return rocketBase * rotateY(index * 180.0f) * translate(1.15f, 0.0f, 0.0f);
 }
 
-void drawRocketBooster(const Renderer& r, const Primitives& p, const Mat4& booster, float thrust, float legs)
+void drawRocketBooster(const Renderer& r, const Primitives& p, const Mat4& booster, float thrust)
 {
     r.drawPart(p.frustum,  booster * translate(0.0f, 0.65f, 0.0f) * scale(0.55f, 0.5f, 0.55f));
     r.drawPart(p.cylinder, booster * translate(0.0f, 2.9f, 0.0f)  * scale(0.7f, 4.0f, 0.7f));
     r.drawPart(p.cone,     booster * translate(0.0f, 5.4f, 0.0f)  * scale(0.7f, 1.0f, 0.7f));
-    drawLegs(r, p, booster, BOOSTER_LEGS, legs);
     drawFlame(r, p, booster, 0.4f, 0.5f, 3.0f, thrust);
 }
 
-void drawRocket(const Renderer& r, const Primitives& p, const Mat4& base, const RocketLook& look)
+void drawRocketFirstStage(const Renderer& r, const Primitives& p, const Mat4& base, float thrust, float legs)
 {
-    // Core stack, bottom to top.
     r.drawPart(p.frustum,     base * translate(0.0f, 0.45f, 0.0f) * scale(1.2f, 0.9f, 1.2f));    // engine nozzle
     r.drawPart(p.cylinder,    base * translate(0.0f, 3.65f, 0.0f) * scale(1.6f, 5.5f, 1.6f));    // first stage
     r.drawPart(p.frustumWide, base * translate(0.0f, 6.65f, 0.0f) * scale(1.6f, 0.5f, 1.6f));    // interstage
-    r.drawPart(p.cylinder,    base * translate(0.0f, 8.9f, 0.0f)  * scale(1.28f, 4.0f, 1.28f));  // second stage
-    r.drawPart(p.cone,        base * translate(0.0f, 12.1f, 0.0f) * scale(1.28f, 2.4f, 1.28f));  // nose cone
 
     // Four fins around the base, 90 degrees apart.
     for (int i = 0; i < 4; ++i)
         r.drawPart(p.fin, base * rotateY(45.0f + i * 90.0f) * translate(0.0f, 1.9f, 0.75f)
                               * rotateZ(90.0f) * scale(2.0f, 0.12f, 1.1f));
 
-    drawLegs(r, p, base, CORE_LEGS, look.legs);
-    drawFlame(r, p, base, 0.0f, 1.0f, 5.0f, look.mainFlame);
+    drawLegs(r, p, base, CORE_LEGS, legs);
+    drawFlame(r, p, base, 0.0f, 1.0f, 5.0f, thrust);
+}
+
+void drawRocketUpperStage(const Renderer& r, const Primitives& p, const Mat4& base, float thrust, float legs)
+{
+    // Its own engine sits inside the interstage until the first stage drops away.
+    r.drawPart(p.frustum,  base * translate(0.0f, UPPER_STAGE_BOTTOM + 0.25f, 0.0f) * scale(0.8f, 0.5f, 0.8f));
+    r.drawPart(p.cylinder, base * translate(0.0f, 8.9f, 0.0f)  * scale(1.28f, 4.0f, 1.28f));   // second stage
+    r.drawPart(p.cone,     base * translate(0.0f, 12.1f, 0.0f) * scale(1.28f, 2.4f, 1.28f));   // nose cone
+    drawLegs(r, p, base, UPPER_LEGS, legs);
+    drawFlame(r, p, base, UPPER_STAGE_BOTTOM, 0.9f, 5.0f, thrust);
+}
+
+void drawRocket(const Renderer& r, const Primitives& p, const Mat4& base, const RocketLook& look)
+{
+    drawRocketFirstStage(r, p, base, look.mainFlame, look.legs);
+    drawRocketUpperStage(r, p, base, 0.0f, 0.0f);
 
     if (look.boosters)
         for (int i = 0; i < 2; ++i)
-            drawRocketBooster(r, p, rocketBoosterMatrix(base, i), look.boosterFlame, 0.0f);
+            drawRocketBooster(r, p, rocketBoosterMatrix(base, i), look.boosterFlame);
 }
