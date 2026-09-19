@@ -40,7 +40,7 @@ Written in modern C++17 with the OpenGL 3.3 core profile, GLFW and GLAD. There a
 |---|---|
 | ✈️ **Airplane** (twin-engine airliner) | Parking → *Pushback* → Taxi → Hold Short → Runway Entry (line-up) → Acceleration → Rotation → Climb (gear retracts) → Cruise/Hold → Approach (downwind, base) → Descent (localizer + glide slope, gear down) → Flare → Touchdown → Taxi In → Parking (nose-in) |
 | 🚁 **Helicopter** | Parked → Engine start (rotor spool-up) → Lift-off → Hover (pedal turn) → Transition (nose down) → Climb → Cruise/Hold → Approach (decelerating, nose up) → Landing (vertical) → Shutdown |
-| 🚀 **Rocket** (reusable, two side boosters) | Countdown (service arms swing away) → Ignition → Liftoff → Gravity turn → **Booster separation** (boosters fly back to LZ-1 / LZ-2) → Main engine cut-off → Flip → Boostback burn → Coast → Entry burn → Landing burn (legs deploy) → Landed on the launch mount |
+| 🚀 **Rocket** (reusable, two side boosters) | Countdown (service arms swing away) → Ignition → Liftoff → Gravity turn → **Booster separation** (boosters fly back to LZ-1 / LZ-2) → Main engine cut-off → Flip → Boostback burn → Coast → Entry burn → Landing burn (legs deploy) → Landed on pad 4 of the **rocket base**, between two recovered rockets |
 
 ### Airport environment
 
@@ -55,6 +55,7 @@ Written in modern C++17 with the OpenGL 3.3 core profile, GLFW and GLAD. There a
   - an octagonal pad with a ramp and flame trench
   - the launch mount, a lattice service tower with swing-away arms, and a propellant tank
 - **Two booster landing zones**, LZ-1 and LZ-2.
+- **Rocket base** east of the launch pad: three landing pads (3, 4, 5) and a recovery hangar. Two recovered rockets stand on pads 3 and 5; pad 4 is kept free for the returning rocket.
 
 ### Effects, ATC and cameras
 
@@ -104,15 +105,16 @@ The build copies `glfw3.dll` next to the executable automatically.
 |---|---|
 | **P** | Airplane: start the cycle (taxi → take off → hold → land → park). Press again after parking for pushback and a new departure |
 | **H** | Helicopter: start the cycle (take off → hold → land on the helipad) |
-| **L** | Rocket: countdown and launch. After everything has landed, press again to restack and relaunch |
+| **L** | Rocket: countdown and launch. After everything has landed, press again to move it back to the launch pad and relaunch |
 | **Enter** | Start all three |
 | **R** | Reset everything |
 | **0** | Overview of the whole airport |
 | **1 / 2 / 3** | Follow the airplane / helicopter / rocket |
-| **4 / 5** | Runway view / ATC tower view |
+| **4 / 5 / 6** | Runway view / ATC tower view / Rocket base view |
 | **C** | Cockpit view of the followed vehicle (on/off) |
-| Mouse drag / Arrow keys | Orbit the camera (in the cockpit: look around) |
-| Scroll / W, S | Zoom |
+| Mouse drag / Arrow keys | Orbit the camera. In the cockpit: look around 360° (out of the side windows, back at your own aircraft, down at the airport) |
+| Scroll / W, S | Zoom (in the cockpit: field of view 30°–100°)|
+| **V** | Cockpit: look straight ahead again, normal zoom |
 | **F** | Wireframe ↔ solid |
 | **Space** | Pause / resume |
 | **+ / −** | Simulation speed ×1 / ×2 / ×4 / ×8 |
@@ -187,7 +189,7 @@ flowchart TB
 | **Primitives** | `Primitives.h/.cpp` | Creates the shared unit meshes once: `cube, sphere, cylinder, cone, frustum, frustumWide, octagon, ringThin, ringThick, wing, fin, smoke` |
 | **Renderer** | `Renderer.h/.cpp` | GLSL shaders; `drawPart` (solid + outline edges), `drawSolid` (flames, smoke), `drawLines` (grid); wireframe mode |
 | **Models** | `Models.h/.cpp` | Hierarchical models: airplane (folding gear), helicopter (rotors), rocket (boosters, flames, landing legs) |
-| **Environment** | `Environment.h/.cpp` | `Layout` constants; ground, runway, taxiways, apron, terminal, tower, helipad, landing zones, launch pad |
+| **Environment** | `Environment.h/.cpp` | `Layout` constants; ground, runway, taxiways, apron, terminal, tower, helipad, launch pad, booster landing zones, rocket base |
 | **Simulation** | `Simulation.h/.cpp` | Vehicle state machines, guidance laws, ATC/pilot radio, rocket stage return, smoke particles |
 | **Application** | `main.cpp` | GLFW window, input callbacks, orbit/follow/cockpit cameras, cockpit instrument panel, frame loop |
 
@@ -207,7 +209,7 @@ sequenceDiagram
     end
     App->>Cam: follow target or cockpit eye from vehicle matrix
     App->>R: setCamera(view, projection)
-    App->>R: ground, grid, airport, helipad, launch pad, LZs
+    App->>R: ground, grid, airport, helipad, launch pad, LZs, rocket base
     App->>R: vehicles (own vehicle hidden in cockpit)
     App->>R: smoke puffs
     opt cockpit view
@@ -272,7 +274,7 @@ MeshData (CPU)                         Mesh (GPU)
 ```
             North (−Z)
    ┌─────────────────────────────────────────────────────────────────┐
-   │        airplane holding circle (centre 0, −205, r 150, alt 50)  │
+   │   airplane holding circle over the airport (40, −10, r 150, alt 60) │
    │                                                                 │
    │  ══════════════════ RUNWAY 09/27  (z = −45, x −65..65) ════════ │
    │        ║ connector          ║ connector           ║ connector   │
@@ -282,6 +284,7 @@ MeshData (CPU)                         Mesh (GPU)
    │        └──[jet bridges]──────────────────┘       (32, 5)        │
    │        [======== TERMINAL (z 20..28) ====]  ▲ATC   ◆ launch pad  │
    │                                            (15,22)   (75, 12)   │
+   │                          rocket base: pads 3 · 4 · 5 (125, 15)  │
    │                              LZ-2 (53, 44)       LZ-1 (97, 44)  │
    │        helicopter holding circle (centre 82, 115, r 60, alt 35) │
    └─────────────────────────────────────────────────────────────────┘
@@ -340,7 +343,7 @@ stateDiagram-v2
     Acceleration --> Rotation: speed >= Vr
     Rotation --> Climb: pitch >= 9 deg (liftoff)
     Climb --> CruiseHold: altitude > 20
-    CruiseHold --> Approach: 25 s in the hold
+    CruiseHold --> Approach: 25 s on the circle over the airport
     Approach --> Descent: downwind done, "cleared to land"
     Descent --> Flare: height < 1.5
     Flare --> Touchdown: wheels on runway
@@ -394,11 +397,12 @@ stateDiagram-v2
     Coast --> EntryBurn: falling fast, high up
     EntryBurn --> Coast
     Coast --> LandingBurn: just high enough to stop
-    LandingBurn --> Landed: legs on the launch mount
-    Landed --> OnPad: L (restack)
+    LandingBurn --> Landed: legs on pad 4 at the rocket base
+    Landed --> OnPad: L (moved back to the pad, restacked)
 ```
 
 - **Side boosters.** They separate at *t* = 10 s. Each becomes its own `StageMotion` and flies Flip → Boostback → Coast → Landing Burn to **LZ-1 / LZ-2**.
+- **Core.** It returns to the **rocket base** and lands on the free pad 4 (`ROCKET_BASE_FREE_PAD`), between the two recovered rockets on pads 3 and 5, blowing dust across the pad.
 - **Boostback targeting.** The required sideways velocity is `distance to target ÷ predicted fall time`, and the engine pushes the stage towards it.
 - **Landing burn ("suicide burn").** It starts at height `v² / 2(a − g)`. The allowed descent speed is `√(2(a − g)·h)`, so the stage reaches zero speed at the pad.
 - **Result.** In testing all three stages touch down within 0.3 units of their targets at 1 unit/s.
@@ -415,7 +419,7 @@ The tower issues clearances in the correct operational order, for example:
 [TOWER]  Airplane, runway 09, wind calm, cleared to land.
 ```
 
-Traffic is separated **vertically** (airplane hold at 50, helicopter hold at 35) and **geographically** (airplane holds north of the runway, helicopter south).
+Traffic is separated **vertically**: the airplane holds at 60 over the airport and the helicopter holds at 35 south of the helipad.
 
 ---
 
@@ -425,7 +429,7 @@ Traffic is separated **vertically** (airplane hold at 50, helicopter hold at 35)
 |---|---|
 | **Orbit / fixed** (0, 4, 5) | Spherical coordinates (yaw, pitch, distance) around a target, turned into a view matrix with `lookAt` |
 | **Follow** (1, 2, 3) | Same orbit camera, with the target updated every frame to the vehicle's position |
-| **Cockpit** (C) | The eye point and look direction are defined **in vehicle coordinates** and transformed by the vehicle's model matrix, so the view pitches and banks with the aircraft. Head yaw/pitch let the pilot look around |
+| **Cockpit** (C) | The eye point and look direction are defined **in vehicle coordinates** and transformed by the vehicle's model matrix, so the view pitches and banks with the aircraft. Head yaw/pitch let the pilot look all the way round with the arrows or mouse; from the hold, looking left and down shows the whole airport below. Around the eye the fuselage (or the helicopter cabin) is left out, so looking back shows the wings, engines and tail |
 | **Rocket onboard** (3 then C) | Camera on the side of the upper stage looking down along the body and exhaust |
 
 **Cockpit panel.** Its gauges read live simulation data:
@@ -435,7 +439,7 @@ Traffic is separated **vertically** (airplane hold at 50, helicopter hold at 35)
 - altitude
 - compass
 
-Projection: perspective, 45° field of view (60° in the cockpit), near 0.5, far 5000.
+Projection: perspective, 45° field of view (cockpit: 60°, adjustable 30°–100°), near 0.5, far 5000.
 
 ---
 
@@ -468,7 +472,7 @@ All of these are named constants at the top of `src/Simulation.cpp`.
 | `APPROACH_SPEED` / `TOUCHDOWN_SPEED` | 14 / 11 | Final approach and flare speeds |
 | `GLIDE_SLOPE` / `FLARE_HEIGHT` | 5° / 1.5 | Approach path |
 | `PLANE_HOLD_TIME` / `HELI_HOLD_TIME` | 25 s / 20 s | Time in the hold before landing |
-| `PLANE_HOLD_ALT` / `HELI_ALTITUDE` | 50 / 35 | Holding altitudes |
+| `PLANE_HOLD_ALT` / `HELI_ALTITUDE` | 60 / 35 | Holding altitudes |
 | `BOOSTER_SEP_TIME` / `MECO_TIME` | 10 s / 20 s | Rocket event times after liftoff |
 | `BOOSTBACK_ACCEL` / `LANDING_ACCEL` | 25 / 25 | Rocket engine accelerations |
 
