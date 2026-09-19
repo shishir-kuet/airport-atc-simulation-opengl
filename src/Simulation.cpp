@@ -55,17 +55,20 @@ const float HELI_HOLD_Z      = HELIPAD_POS.z + 110.0f;
 constexpr float HELI_HOLD_RADIUS = 60.0f;
 constexpr float HELI_HOLD_TIME   = 20.0f;
 
-// Rocket (reusable: boosters and core fly back and land)
+// Rocket (separates twice; only the final second stage flies back and lands)
 constexpr float BOOSTER_SEP_TIME = 10.0f;   // seconds after liftoff
-constexpr float MECO_TIME        = 20.0f;   // main engine cut-off: the return begins
+constexpr float STAGE_SEP_TIME   = 20.0f;   // main engine cut-off + stage separation
+constexpr float STAGE2_DELAY     = 1.0f;    // short coast before the second stage lights
+constexpr float STAGE2_BURN_TIME = 8.0f;
+constexpr float STAGE2_ACCEL     = 12.0f;   // lighter stage, so it speeds up faster
+constexpr float STAGE2_MAX_TILT  = 25.0f;   // steep, lofted arc so it can come back
 constexpr float GRAVITY          = 9.8f;
 constexpr float BOOSTBACK_ACCEL  = 25.0f;   // units / s^2 from the engine
 constexpr float ENTRY_BURN_ACCEL = 25.0f;
 constexpr float ENTRY_BURN_SPEED = 70.0f;   // falling speed after the entry burn
 constexpr float LANDING_ACCEL    = 25.0f;   // engine deceleration in the landing burn
-// Height of each stage's origin once standing on its deployed legs.
-const float CORE_LAND_Y    = LANDING_ZONE_TOP - legFootY(CORE_LEGS);   // on a rocket-base pad
-const float BOOSTER_LAND_Y = LANDING_ZONE_TOP - legFootY(BOOSTER_LEGS);
+// Height of the second stage's origin once standing on its deployed legs.
+const float UPPER_LAND_Y   = LANDING_ZONE_TOP - legFootY(UPPER_LEGS);   // on pad 4 at the rocket base
 
 // Ground routes (x, z). `stop` = come to a smooth stop exactly on that point.
 struct Waypoint { float x, z; bool stop; };
@@ -190,6 +193,7 @@ void Simulation::reset()
     rocket = RocketMotion{};
     rocket.core.pos = Vec3(LAUNCH_PAD_POS.x, LAUNCH_MOUNT_TOP + ROCKET_GROUND_OFFSET, LAUNCH_PAD_POS.z);
 
+    debris.clear();
     puffs.clear();
     for (bool& started : trailStarted)
         started = false;
@@ -228,14 +232,10 @@ void Simulation::startHelicopter()
 void Simulation::launchRocket()
 {
     RocketMotion& k = rocket;
-    if (k.core.state == RocketState::Landed)
+    if (!k.upperAttached && k.upper.state == RocketState::Landed)
     {
-        // Reusable: once every stage is back down, restack and fly again.
-        bool boostersDown = k.boostersAttached || (k.boosters[0].state == RocketState::Landed &&
-                                                   k.boosters[1].state == RocketState::Landed);
-        if (!boostersDown)
-            return;
-        radio("[LAUNCH] Rocket moved from the rocket base back to the launch pad, boosters restacked.");
+        // The second stage is back: a new rocket is stacked on the launch pad.
+        radio("[LAUNCH] New rocket stacked on the launch pad.");
         k = RocketMotion{};
         k.core.pos = Vec3(LAUNCH_PAD_POS.x, LAUNCH_MOUNT_TOP + ROCKET_GROUND_OFFSET, LAUNCH_PAD_POS.z);
     }
@@ -738,55 +738,110 @@ void Simulation::updateRocket(float dt)
         c.velocity = dir * k.speed;
         c.pos = c.pos + c.velocity * dt;
 
+        // First separation: the side boosters are empty and fall away.
         if (t >= BOOSTER_SEP_TIME && k.boostersAttached)
         {
-            radio("[LAUNCH] Booster separation. Boosters returning to LZ-1 and LZ-2.");
+            radio("[LAUNCH] Booster separation. The empty boosters fall away.");
             Mat4 base = rocketMatrix();
             for (int i = 0; i < 2; ++i)
             {
-                StageMotion& b = k.boosters[i];
-                b = StageMotion{};
-                Mat4 m = rocketBoosterMatrix(base, i);
-                b.pos = transformPoint(m, {0, 0, 0});
-                Vec3 out = transformPoint(m, {1, 0, 0}) - b.pos;
-                b.velocity = c.velocity + out * 4.0f;   // pushed away sideways
-                b.tiltX = c.tiltX;
-                b.target = Vec3(LANDING_ZONE[i].x, BOOSTER_LAND_Y, LANDING_ZONE[i].z);
-                b.state = RocketState::Flip;
+                Debris d{Debris::Booster};
+                d.start = rocketBoosterMatrix(base, i);
+                Vec3 out = transformPoint(d.start, {1, 0, 0}) - transformPoint(d.start, {0, 0, 0});
+                d.velocity = c.velocity + out * 4.0f;   // pushed away sideways
+                d.spinRate = 25.0f;
+                d.pivotY = 3.0f;
+                debris.push_back(d);
             }
             k.boostersAttached = false;
             k.boosterFlame = 0;
         }
 
-        if (t >= MECO_TIME)
+        // Second separation: the first stage is empty and falls away; the
+        // second stage carries on alone and later flies back.
+        if (t >= STAGE_SEP_TIME)
         {
-            c.flame = 0;
+            radio("[LAUNCH] Main engine cut-off. Stage separation! The empty first stage falls away.");
+
+            Debris d{Debris::FirstStage};
+            d.start = rocketMatrix();
+            d.velocity = c.velocity - dir * 1.0f;
+            d.spinRate = 12.0f;
+            d.pivotY = 3.5f;
+            debris.push_back(d);
+
+            // Second stage: starts where it sat on top of the first stage,
+            // pushed gently forward by the separation springs.
             const Vec3& pad = ROCKET_BASE_PADS[ROCKET_BASE_FREE_PAD];
-            c.target = Vec3(pad.x, CORE_LAND_Y, pad.z);   // free pad at the rocket base
-            setState(RocketState::Flip, "[LAUNCH] Main engine cut-off. Coasting up, flipping to head home.");
+            StageMotion& u = k.upper;
+            u = StageMotion{};
+            u.pos = c.pos;
+            u.velocity = c.velocity + dir * 2.0f;
+            u.tiltX = c.tiltX;
+            u.target = Vec3(pad.x, UPPER_LAND_Y, pad.z);   // free pad at the rocket base
+            u.surfaceY = LANDING_ZONE_TOP;
+            u.site = "pad 4 at the rocket base";
+            u.state = RocketState::Stage2Burn;
+            k.upperAttached = false;
+
+            c.flame = 0;
+            c.state = RocketState::Stage2Burn;   // from now on the mission is the second stage
         }
         break;
     }
 
-    default:   // Flip ... Landed: the return flight
-        updateReturningStage(c, dt, true, "[ROCKET]  ");
+    default:
         break;
     }
 
-    if (!k.boostersAttached)
+    if (!k.upperAttached)
     {
-        updateReturningStage(k.boosters[0], dt, false, "[BOOSTER 1] ");
-        updateReturningStage(k.boosters[1], dt, false, "[BOOSTER 2] ");
+        StageMotion& u = k.upper;
+        if (u.state == RocketState::Stage2Burn)
+        {
+            // Second stage burn: lights after a short coast and speeds up much
+            // faster than the heavy first stage did, pitching further over.
+            // After cut-off it flies a free (ballistic) arc up to its highest point.
+            u.timer += dt;
+            float burnTime = u.timer - STAGE2_DELAY;
+            bool burning = burnTime >= 0.0f && burnTime < STAGE2_BURN_TIME;
+            if (burning && u.flame == 0.0f)
+                radio("[STAGE 2] Second stage ignition.");
+            if (!burning && u.flame > 0.0f)
+                radio("[STAGE 2] Engine cut-off. Flying its trajectory up to the highest point.");
+            u.flame = burning ? std::min(1.0f, burnTime * 2.0f + 0.05f) : 0.0f;
+
+            if (burning)
+            {
+                u.tiltX = approach(u.tiltX, STAGE2_MAX_TILT, 3.0f * dt);
+                Vec3 axis(std::sin(radians(u.tiltX)), std::cos(radians(u.tiltX)), 0.0f);
+                u.velocity = u.velocity + axis * (STAGE2_ACCEL * u.flame * dt);
+            }
+            u.velocity.y -= GRAVITY * dt;
+            u.pos = u.pos + u.velocity * dt;
+
+            // Near the top of the arc it turns round and heads home.
+            if (burnTime > STAGE2_BURN_TIME && u.velocity.y < 30.0f)
+            {
+                u.state = RocketState::Flip;
+                u.timer = 0;
+                radio("[STAGE 2] Highest point reached. Flipping to fly back to the rocket base.");
+            }
+        }
+        else
+        {
+            updateReturningStage(u, dt, "[STAGE 2] ");
+        }
     }
 }
 
-// Return flight of a stage, like a reusable rocket:
+// Return flight of the second stage, like a reusable rocket:
 //   Flip         - engine off, turn the rocket so the engine can push it back
 //   Boostback    - burn to reverse the sideways speed, aiming at the landing spot
 //   Coast        - engine off, fall engine-first; grid fins steer a little
-//   Entry burn   - (core only) slow down before the thick lower atmosphere
+//   Entry burn   - slow down before the thick lower atmosphere
 //   Landing burn - legs out, decelerate to touch down gently on the target
-void Simulation::updateReturningStage(StageMotion& s, float dt, bool isCore, const char* name)
+void Simulation::updateReturningStage(StageMotion& s, float dt, const char* name)
 {
     if (s.state == RocketState::Landed)
         return;
@@ -807,7 +862,7 @@ void Simulation::updateReturningStage(StageMotion& s, float dt, bool isCore, con
     // fall (the burns stretch the fall a little, hence the extra factor).
     float vy = s.velocity.y;
     float fallTime = (vy + std::sqrt(vy * vy + 2.0f * GRAVITY * std::max(height, 0.0f))) / GRAVITY;
-    fallTime = std::max(fallTime, 2.0f) * (isCore ? 1.25f : 1.1f);
+    fallTime = std::max(fallTime, 2.0f) * 1.25f;
     Vec3 wanted = toTarget * (1.0f / fallTime);
     Vec3 correction = wanted - sideways;
     float correctionLen = std::sqrt(dot(correction, correction));
@@ -835,7 +890,7 @@ void Simulation::updateReturningStage(StageMotion& s, float dt, bool isCore, con
         return std::fabs(s.tiltX - tx) < 3.0f && std::fabs(s.tiltZ - tz) < 3.0f;
     };
 
-    const float flipRate = isCore ? 30.0f : 35.0f;
+    const float flipRate = 30.0f;
     const float netDecel = LANDING_ACCEL - GRAVITY;
     bool engineHoldsVertical = false;   // during the entry and landing burns
 
@@ -870,7 +925,7 @@ void Simulation::updateReturningStage(StageMotion& s, float dt, bool isCore, con
         pushSideways(wanted, 1.5f);
         if (mustBrake)
             setState(RocketState::LandingBurn, "Landing burn, legs deploying.");
-        else if (isCore && !s.entryBurnDone && vy < -(ENTRY_BURN_SPEED + 30.0f) && height > 300.0f)
+        else if (!s.entryBurnDone && vy < -(ENTRY_BURN_SPEED + 30.0f) && height > 300.0f)
             setState(RocketState::EntryBurn, "Entry burn.");
         break;
 
@@ -905,13 +960,17 @@ void Simulation::updateReturningStage(StageMotion& s, float dt, bool isCore, con
         else
             s.velocity.y = std::max(s.velocity.y - GRAVITY * dt, targetVy);
 
-        // Slide over the exact landing spot, leaning slightly into the correction.
-        Vec3 over = toTarget * 1.2f;
+        // Slide over the exact landing spot: the sideways motion also brakes
+        // evenly to zero, so it must start at twice the average speed
+        // (2 x distance / time left). Time left while braking evenly is about
+        // 2 x height / falling speed. Lean slightly into the correction.
+        float timeLeft = std::max(0.6f, 2.0f * std::max(height, 0.0f) / (std::fabs(s.velocity.y) + 1.0f));
+        Vec3 over = toTarget * (2.0f / timeLeft);
         float overLen = std::sqrt(dot(over, over));
-        if (overLen > 20.0f)
-            over = over * (20.0f / overLen);
+        if (overLen > 60.0f)
+            over = over * (60.0f / overLen);
         Vec3 lean = over - sideways;
-        pushSideways(over, 10.0f);
+        pushSideways(over, 15.0f);
         s.tiltX = approach(s.tiltX, std::clamp(lean.x * 3.0f, -10.0f, 10.0f), 20.0f * dt);
         s.tiltZ = approach(s.tiltZ, std::clamp(lean.z * 3.0f, -10.0f, 10.0f), 20.0f * dt);
         s.flame = 0.4f + 0.6f * std::clamp(height / 30.0f, 0.0f, 1.0f);
@@ -923,8 +982,8 @@ void Simulation::updateReturningStage(StageMotion& s, float dt, bool isCore, con
             s.tiltX = s.tiltZ = 0.0f;
             s.flame = 0.0f;
             s.legs = 1.0f;
-            setState(RocketState::Landed, isCore ? "Touchdown on pad 4 at the rocket base. Welcome home!"
-                                                  : "Touchdown on the landing zone.");
+            std::string message = std::string("Touchdown on ") + s.site + ". Welcome home!";
+            setState(RocketState::Landed, message.c_str());
             return;
         }
         break;
@@ -982,15 +1041,17 @@ void Simulation::updateEffects(float dt)
 {
     const RocketMotion& k = rocket;
     const StageMotion& c = k.core;
+    const StageMotion& u = k.upper;
     bool coreBurning = c.flame > 0.0f;
 
-    // Ground cloud rolling out of the flame trench (+Z side of the pad) while
-    // the engine fires close to the pad - at launch and again at landing.
     smokeTimer += dt;
     const float interval = 0.04f;
     while (smokeTimer >= interval)
     {
         smokeTimer -= interval;
+
+        // Ground cloud rolling out of the flame trench (+Z side of the pad)
+        // while the engines fire at launch.
         bool nearPad = c.pos.y - LAUNCH_MOUNT_TOP < 25.0f &&
                        distanceXZ(c.pos, LAUNCH_PAD_POS.x, LAUNCH_PAD_POS.z) < 15.0f;
         if (coreBurning && nearPad)
@@ -1000,35 +1061,26 @@ void Simulation::updateEffects(float dt)
             emitPuff(pos, vel, 5.0f, 2.0f, 7.0f);
         }
 
-        // Dust blown outwards across a landing pad by a stage's landing burn.
-        const StageMotion* landing[3] = {&c, &k.boosters[0], &k.boosters[1]};
-        for (int i = 0; i < 3; ++i)
+        // Dust blown outwards across the landing pad by the second stage's landing burn.
+        if (!k.upperAttached && u.state == RocketState::LandingBurn && u.pos.y - u.target.y < 12.0f)
         {
-            const StageMotion& s = *landing[i];
-            bool flying = i == 0 || !k.boostersAttached;
-            if (!flying || s.state != RocketState::LandingBurn || s.pos.y - s.target.y > 12.0f)
-                continue;
             float a = randomFloat() * 2.0f * PI;
             Vec3 dir(std::cos(a), 0.0f, std::sin(a));
-            float size = i == 0 ? 1.0f : 0.6f;
-            emitPuff(Vec3(s.target.x, 0.6f, s.target.z) + dir * 1.5f,
-                     dir * (6.0f + randomFloat() * 4.0f) + Vec3(0.0f, 0.8f, 0.0f), 3.0f, 1.2f * size, 3.5f * size);
+            emitPuff(Vec3(u.target.x, u.surfaceY + 0.4f, u.target.z) + dir * 1.5f,
+                     dir * (6.0f + randomFloat() * 4.0f) + Vec3(0.0f, 0.8f, 0.0f), 3.0f, 1.2f, 3.5f);
         }
     }
 
-    // Exhaust trails of the core and of each separated booster.
+    // Exhaust trails of the whole rocket and, after separation, of the second stage.
     if (coreBurning && c.state != RocketState::Ignition)
         emitTrail(0, transformPoint(rocketMatrix(), {0.0f, -1.5f, 0.0f}), 1.0f);
     else
         trailStarted[0] = false;
 
-    for (int i = 0; i < 2; ++i)
-    {
-        if (!k.boostersAttached && k.boosters[i].flame > 0.0f)
-            emitTrail(1 + i, transformPoint(boosterMatrix(i), {0.0f, -0.8f, 0.0f}), 0.45f);
-        else
-            trailStarted[1 + i] = false;
-    }
+    if (!k.upperAttached && u.flame > 0.0f)
+        emitTrail(1, transformPoint(upperStageMatrix(), {0.0f, UPPER_STAGE_BOTTOM - 1.2f, 0.0f}), 0.7f);
+    else
+        trailStarted[1] = false;
 
     for (Puff& p : puffs)
     {
@@ -1039,6 +1091,19 @@ void Simulation::updateEffects(float dt)
     puffs.erase(std::remove_if(puffs.begin(), puffs.end(),
                                [](const Puff& p) { return p.age >= p.life; }),
                 puffs.end());
+
+    // Spent boosters and first stage fall away under gravity while slowly
+    // tumbling; their job is done, so they are removed once they reach the ground.
+    for (Debris& d : debris)
+    {
+        d.velocity.y -= GRAVITY * dt;
+        d.offset = d.offset + d.velocity * dt;
+        d.angle += d.spinRate * dt;
+    }
+    debris.erase(std::remove_if(debris.begin(), debris.end(),
+                                [this](const Debris& d)
+                                { return transformPoint(debrisMatrix(d), {0, d.pivotY, 0}).y < 0.0f; }),
+                 debris.end());
 }
 
 // ---- Matrices ----------------------------------------------------------------------
@@ -1071,12 +1136,17 @@ Mat4 Simulation::rocketMatrix() const
     return translate(c.pos.x + sx, c.pos.y, c.pos.z + sz) * rotateZ(-c.tiltX) * rotateX(c.tiltZ);
 }
 
-Mat4 Simulation::boosterMatrix(int index) const
+Mat4 Simulation::upperStageMatrix() const
 {
-    const StageMotion& b = rocket.boosters[index];
-    // rotateY keeps each booster turned the way it was mounted on the core.
-    return translate(b.pos.x, b.pos.y, b.pos.z) * rotateZ(-b.tiltX) * rotateX(b.tiltZ)
-         * rotateY(index * 180.0f);
+    const StageMotion& u = rocket.upper;
+    return translate(u.pos.x, u.pos.y, u.pos.z) * rotateZ(-u.tiltX) * rotateX(u.tiltZ);
+}
+
+Mat4 Simulation::debrisMatrix(const Debris& d) const
+{
+    // Where it was at separation, moved by its fall, tumbling about its middle.
+    return translate(d.offset.x, d.offset.y, d.offset.z) * d.start
+         * translate(0, d.pivotY, 0) * rotateZ(-d.angle) * translate(0, -d.pivotY, 0);
 }
 
 Vec3 Simulation::focusPoint(int vehicle) const
@@ -1085,7 +1155,9 @@ Vec3 Simulation::focusPoint(int vehicle) const
     {
     case 0:  return plane.pos;
     case 1:  return heli.pos;
-    default: return transformPoint(rocketMatrix(), {0.0f, 7.0f, 0.0f});
+    default: // the rocket; after stage separation, the second stage
+        return rocket.upperAttached ? transformPoint(rocketMatrix(), {0.0f, 7.0f, 0.0f})
+                                    : transformPoint(upperStageMatrix(), {0.0f, 10.0f, 0.0f});
     }
 }
 
@@ -1139,6 +1211,7 @@ const char* toString(RocketState s)
     case RocketState::Countdown:   return "COUNTDOWN";
     case RocketState::Ignition:    return "IGNITION";
     case RocketState::Ascent:      return "ASCENT";
+    case RocketState::Stage2Burn:  return "STAGE 2 FLIGHT";
     case RocketState::Flip:        return "FLIP";
     case RocketState::Boostback:   return "BOOSTBACK";
     case RocketState::Coast:       return "COAST";
@@ -1151,16 +1224,16 @@ const char* toString(RocketState s)
 
 std::string Simulation::statusText() const
 {
-    // Rocket altitude: above the launch mount on the way up, above its
-    // landing pad on the way back.
-    const StageMotion& c = rocket.core;
-    float rocketAlt = c.state >= RocketState::Flip ? c.pos.y - c.target.y : c.pos.y - LAUNCH_MOUNT_TOP;
+    // The flying rocket: the whole stack, then the second stage after separation.
+    // Altitude above the launch mount on the way up, above its landing pad on the way back.
+    const StageMotion& s = rocket.upperAttached ? rocket.core : rocket.upper;
+    float rocketAlt = s.state >= RocketState::Flip ? s.pos.y - s.target.y : s.pos.y - LAUNCH_MOUNT_TOP;
 
     char text[256];
     std::snprintf(text, sizeof(text),
                   "Plane: %s (spd %.0f, alt %.0f) | Heli: %s (alt %.0f) | Rocket: %s (alt %.0f)",
                   toString(plane.state), plane.speed, plane.pos.y - PLANE_GROUND_Y,
                   toString(heli.state), heli.pos.y - HELI_GROUND_Y,
-                  toString(c.state), rocketAlt);
+                  toString(s.state), rocketAlt);
     return text;
 }

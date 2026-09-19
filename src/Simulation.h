@@ -58,21 +58,25 @@ struct HelicopterMotion
 
 // ---- Rocket ------------------------------------------------------------------
 
-// Launch, then (reusable rocket) fly back and land:
-// OnPad -> Countdown -> Ignition -> Ascent -> Flip -> Boostback -> Coast ->
-// Entry Burn -> Coast -> Landing Burn -> Landed.
-// The side boosters separate during the ascent and fly the same return
-// sequence (without the entry burn) to their own landing zones.
+// The rocket separates twice; only the final (second) stage comes back:
+//   whole rocket : OnPad -> Countdown -> Ignition -> Ascent
+//   boosters     : separate at 10 s, their job is done - they fall away
+//   first stage  : separates at 20 s, its job is done - it falls away
+//   second stage : Stage 2 Burn (faster, higher) -> Flip -> Boostback -> Coast
+//                  -> Entry Burn -> Coast -> Landing Burn -> Landed (rocket base, pad 4)
 enum class RocketState
 {
-    OnPad, Countdown, Ignition, Ascent, Flip, Boostback, Coast, EntryBurn, LandingBurn, Landed
+    OnPad, Countdown, Ignition, Ascent, Stage2Burn,
+    Flip, Boostback, Coast, EntryBurn, LandingBurn, Landed
 };
 
-// One flying stage: the core rocket or a separated side booster.
+// The flying rocket: the whole stack until stage separation, then the second
+// stage. It uses the whole rocket's frame (origin at the first stage's engine
+// nozzle), so the second stage keeps its place when it separates.
 struct StageMotion
 {
     RocketState state = RocketState::OnPad;
-    Vec3 pos;                 // bottom of the stage (engine nozzle)
+    Vec3 pos;                 // origin of the rocket's frame
     Vec3 velocity;
     float tiltX = 0;          // lean of the rocket axis towards +X (degrees)
     float tiltZ = 0;          // lean of the rocket axis towards +Z (degrees)
@@ -80,14 +84,26 @@ struct StageMotion
     float legs = 0;           // landing legs: 0 = stowed, 1 = deployed
     float timer = 0;          // time in the current state
     Vec3 target;              // where `pos` must end up after landing
+    float surfaceY = 0;       // height of the surface it lands on (for the dust)
+    const char* site = "";    // name of the landing site, for the radio call
     bool entryBurnDone = false;
+};
+
+// A spent part (side booster or first stage) falling away after separation.
+struct Debris
+{
+    enum Kind { Booster, FirstStage } kind;
+    Mat4 start;               // world transform at the moment of separation
+    Vec3 offset, velocity;    // movement since separation
+    float angle = 0, spinRate = 0, pivotY = 0;   // slow tumble about its middle
 };
 
 struct RocketMotion
 {
-    StageMotion core;             // core.state is the state of the whole mission
-    StageMotion boosters[2];      // only used after separation
+    StageMotion core;             // whole rocket until stage separation; core.state is the mission state
+    StageMotion upper;            // second stage, flying on its own after stage separation
     bool boostersAttached = true;
+    bool upperAttached = true;    // false once the stages have separated
     float boosterFlame = 0;       // boosters' engines while still attached
     float speed = 0;              // ascent speed along the rocket axis
     float armSwing = 0;           // service arms: 0 = attached, 1 = swung away
@@ -117,16 +133,19 @@ public:
     // World matrices used to draw each vehicle.
     Mat4 airplaneMatrix() const;
     Mat4 helicopterMatrix() const;
-    Mat4 rocketMatrix() const;
-    Mat4 boosterMatrix(int index) const;   // separated booster 0 or 1
+    Mat4 rocketMatrix() const;               // whole rocket (before stage separation)
+    Mat4 upperStageMatrix() const;           // second stage (after stage separation)
+    Mat4 debrisMatrix(const Debris& d) const;
 
-    // Point the follow camera should look at (0 = airplane, 1 = heli, 2 = rocket).
+    // Point the follow camera should look at:
+    // 0 = airplane, 1 = heli, 2 = rocket (the second stage once separated).
     Vec3 focusPoint(int vehicle) const;
     std::string statusText() const;
 
     AirplaneMotion plane;
     HelicopterMotion heli;
     RocketMotion rocket;
+    std::vector<Debris> debris;
     std::vector<Puff> puffs;
     float time = 0;
 
@@ -134,14 +153,15 @@ private:
     void updateAirplane(float dt);
     void updateHelicopter(float dt);
     void updateRocket(float dt);
-    void updateReturningStage(StageMotion& s, float dt, bool isCore, const char* name);
+    void updateReturningStage(StageMotion& s, float dt, const char* name);
     void updateEffects(float dt);
     void emitPuff(Vec3 pos, Vec3 velocity, float life, float size0, float size1);
     void emitTrail(int emitter, const Vec3& exit, float size);
 
     float smokeTimer = 0;
-    Vec3 lastTrail[3];         // where the last trail puff was placed (core, booster 0, booster 1)
-    bool trailStarted[3] = {false, false, false};
+    // Where the last trail puff was placed: whole rocket, second stage.
+    Vec3 lastTrail[2];
+    bool trailStarted[2] = {false, false};
 };
 
 const char* toString(PlaneState s);
