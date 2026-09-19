@@ -26,7 +26,7 @@ struct CameraView
     const char* name;
     Vec3 target;
     float distance, yaw, pitch;
-    int follow;   // vehicle to follow (0 plane, 1 heli, 2 rocket) or -1 for a fixed view
+    int follow;   // vehicle to follow (0 plane, 1 heli, 2 rocket / its second stage) or -1
 };
 
 // Preset views selected with the number keys 0-6.
@@ -172,7 +172,7 @@ static Mat4 cockpitVehicleMatrix()
     {
     case 0:  return app.sim.airplaneMatrix();
     case 1:  return app.sim.helicopterMatrix();
-    default: return app.sim.rocketMatrix();
+    default: return app.sim.rocket.upperAttached ? app.sim.rocketMatrix() : app.sim.upperStageMatrix();
     }
 }
 
@@ -204,7 +204,7 @@ static void printControls()
               << "  Enter                   : start all three\n"
               << "  R                       : reset everything to the start\n"
               << "  0                       : overview of the whole airport\n"
-              << "  1 / 2 / 3               : follow Airplane / Helicopter / Rocket\n"
+              << "  1 / 2 / 3               : follow Airplane / Helicopter / Rocket (2nd stage)\n"
               << "  4 / 5 / 6               : Runway / ATC tower / Rocket base\n"
               << "  C                       : cockpit view of the followed vehicle (on / off)\n"
               << "  Mouse drag / Arrow keys : orbit camera (cockpit: look around 360, e.g. down at the airport)\n"
@@ -343,19 +343,32 @@ static void drawVehicles(const Renderer& r, const Primitives& p, const Simulatio
     const RocketMotion& k = sim.rocket;
     float flicker = 0.85f + 0.15f * std::sin(sim.time * 45.0f);   // flames flicker slightly
 
-    RocketLook look;
-    look.boosters = k.boostersAttached;
-    look.mainFlame = k.core.flame * flicker;
-    look.boosterFlame = k.boosterFlame * flicker;
-    look.legs = k.core.legs;
-    drawRocket(r, p, sim.rocketMatrix(), look);
+    if (k.upperAttached)
+    {
+        // The whole rocket, until the stages separate.
+        RocketLook look;
+        look.boosters = k.boostersAttached;
+        look.mainFlame = k.core.flame * flicker;
+        look.boosterFlame = k.boosterFlame * flicker;
+        drawRocket(r, p, sim.rocketMatrix(), look);
+    }
+    else
+    {
+        // The second stage flying its own trajectory, or landed at the base.
+        drawRocketUpperStage(r, p, sim.upperStageMatrix(), k.upper.flame * flicker, k.upper.legs);
+    }
 
-    if (!k.boostersAttached)   // flying back / landed on their landing zones
-        for (int i = 0; i < 2; ++i)
-            drawRocketBooster(r, p, sim.boosterMatrix(i), k.boosters[i].flame * flicker, k.boosters[i].legs);
+    // Spent boosters and first stage falling away.
+    for (const Debris& d : sim.debris)
+    {
+        if (d.kind == Debris::Booster)
+            drawRocketBooster(r, p, sim.debrisMatrix(d), 0.0f);
+        else
+            drawRocketFirstStage(r, p, sim.debrisMatrix(d), 0.0f, 0.0f);
+    }
 
     // Two recovered rockets already standing on their legs at the rocket base;
-    // the free pad in between is where the returning core lands.
+    // the free pad in between is where the returning second stage lands.
     RocketLook parked;
     parked.boosters = false;
     parked.legs = 1.0f;
@@ -569,9 +582,6 @@ int main()
                       translate(Layout::LAUNCH_PAD_POS.x, Layout::LAUNCH_PAD_POS.y, Layout::LAUNCH_PAD_POS.z),
                       app.sim.rocket.armSwing);
         drawRocketBase(app.renderer, primitives);
-        for (int i = 0; i < 2; ++i)
-            drawLandingZone(app.renderer, primitives,
-                            translate(Layout::LANDING_ZONE[i].x, Layout::LANDING_ZONE[i].y, Layout::LANDING_ZONE[i].z), i + 1);
 
         // Vehicles and effects
         drawVehicles(app.renderer, primitives, app.sim, inCockpit ? app.camera.follow : -1);
