@@ -195,25 +195,25 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant Loop as main loop
+    participant App as Main loop
     participant Sim as Simulation
     participant Cam as Camera
     participant R as Renderer
-    Loop->>Loop: poll input, held keys
+    App->>App: poll input, held keys
     loop timeScale times
-        Loop->>Sim: update(dt)
+        App->>Sim: update(dt)
         Sim->>Sim: airplane, helicopter, rocket state machines
         Sim->>Sim: boosters, smoke puffs
     end
-    Loop->>Cam: follow target or cockpit eye from vehicle matrix
-    Loop->>R: setCamera(view, projection)
-    Loop->>R: ground, grid, airport, helipad, launch pad, LZs
-    Loop->>R: vehicles (own vehicle hidden in cockpit)
-    Loop->>R: smoke puffs
+    App->>Cam: follow target or cockpit eye from vehicle matrix
+    App->>R: setCamera(view, projection)
+    App->>R: ground, grid, airport, helipad, launch pad, LZs
+    App->>R: vehicles (own vehicle hidden in cockpit)
+    App->>R: smoke puffs
     opt cockpit view
-        Loop->>R: clear depth, draw cockpit frame + gauges
+        App->>R: clear depth, draw cockpit frame + gauges
     end
-    Loop->>Loop: swap buffers
+    App->>App: swap buffers
 ```
 
 - **Fixed-size substeps.** `Simulation::update` clamps `dt` to 50 ms, and speed-up runs several substeps per frame. This keeps the motion stable at ×8.
