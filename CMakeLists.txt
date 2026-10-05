@@ -17,20 +17,42 @@ set(GLFW_LIBRARY
     "${CMAKE_SOURCE_DIR}/glfw/lib-mingw-w64/libglfw3dll.a"
 )
 
-# Create executable
+# Sources, grouped the same way the folders are:
+#   core/   maths, mesh upload, shader + draw helpers, unit primitives
+#   models/ the three vehicles
+#   world/  the airport scenery
+#   sim/    motion and state machines
+#   app/    window, input, cameras, frame drawing
 add_executable(OpenGLProject
-    src/main.cpp
-    src/Mesh.cpp
-    src/Renderer.cpp
-    src/Models.cpp
-    src/Primitives.cpp
-    src/Environment.cpp
-    src/Simulation.cpp
-    src/gl.c
+    src/app/main.cpp
+    src/app/Camera.cpp
+    src/app/Input.cpp
+    src/app/Scene.cpp
+
+    src/core/Mesh.cpp
+    src/core/Primitives.cpp
+    src/core/Renderer.cpp
+    src/core/gl.c
+
+    src/models/Airplane.cpp
+    src/models/Helicopter.cpp
+    src/models/Rocket.cpp
+
+    src/world/Airport.cpp
+    src/world/Helipad.cpp
+    src/world/RocketSite.cpp
+
+    src/sim/Simulation.cpp
+    src/sim/AirplaneSim.cpp
+    src/sim/ManualFlight.cpp
+    src/sim/HelicopterSim.cpp
+    src/sim/RocketSim.cpp
+    src/sim/Effects.cpp
 )
 
-# Header files
+# Header files ("core/Mesh.h", "sim/Tuning.h", ... are found from src/)
 target_include_directories(OpenGLProject PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/include"
     "${GLFW_INCLUDE_DIR}"
 )
@@ -47,3 +69,4 @@ add_custom_command(TARGET OpenGLProject POST_BUILD
     "${CMAKE_SOURCE_DIR}/glfw/lib-mingw-w64/glfw3.dll"
     "$<TARGET_FILE_DIR:OpenGLProject>"
 )
+
