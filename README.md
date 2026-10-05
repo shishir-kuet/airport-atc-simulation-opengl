@@ -312,8 +312,17 @@ specular = max(dot(V, R), 0) ^ shininess  highlight: only near the mirror direct
 colour = material * (ambient + uDiffuse * diffuse) + uSpecular * gloss * specular
 ```
 
+with `ambient = 0.28`, `uDiffuse = 0.85`, `uSpecular = 0.65` and `shininess = 36`.
+
+- **One directional light.** The sun is infinitely far away, so its rays are
+  parallel: `L` is the same vector at every point in the scene and there is no
+  light position, no distance and no attenuation. There are no point lights and
+  no spotlights.
 - The highlight is **added as white light** instead of being multiplied by the
   material, so it also shows up on dark surfaces, exactly as a real one does.
+- **A face turned away from the sun cannot shine.** The specular term is
+  computed only when `diffuse > 0`, and the final colour is clamped to
+  `[0, 1]`.
 - **The normal matrix.** Normals are transformed with `normalMatrix(model)` —
   the inverse transpose of the model matrix's upper-left 3×3 (`core/Math3D.h`).
   Without it a non-uniform scale (every painted marking is a flattened cube)
@@ -680,6 +689,8 @@ OpenGL Project/
 │       ├── HelicopterSim.cpp   lift-off, hover, cruise, vertical landing
 │       ├── RocketSim.cpp       ascent, two separations, return and landing burn
 │       └── Effects.cpp         smoke puffs, exhaust trails, falling parts
+├── docs/
+│   └── ATC_Simulation_Presentation.pptx   lab slides, with a recording of the demo
 └── build/                      CMake build output (OpenGLProject.exe)
 ```
 

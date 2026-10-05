@@ -14,3 +14,20 @@ cmake-build-*/
 glfw/docs/
 glfw/lib-vc*/
 glfw/lib-static-ucrt/
+
+# LaTeX build artefacts (report/report.pdf itself is kept)
+*.aux
+*.toc
+*.out
+*.lof
+*.lot
+*.synctex.gz
+report/*.log
+report/pg-*.png
+report/sheet*.png
+
+# Office lock files
+~$*
+
+# The LaTeX report is kept outside version control
+report/
