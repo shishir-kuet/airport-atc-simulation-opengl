@@ -1,0 +1,69 @@
+// The three vehicles of the simulation: Airplane, Helicopter and Rocket.
+//
+// Each model is built hierarchically: a `base` matrix places the whole
+// vehicle in the world, and every part is `base * (local translate/rotate/scale)`
+// applied to one of the shared unit primitives.
+#pragma once
+
+#include "core/Math3D.h"
+#include "core/Primitives.h"
+#include "core/Renderer.h"
+
+// Nose points to +X, up is +Y. Origin at fuselage centre; wheels touch y = -1.78.
+// gear: 1 = landing gear down, 0 = fully retracted.
+// cockpitView: leave out the fuselage (the camera is inside it).
+void drawAirplane(const Renderer& r, const Primitives& p, const Mat4& base, float gear = 1.0f,
+                  bool cockpitView = false);
+
+// Nose points to +X, up is +Y. Origin at cabin centre; skids touch y = -1.52.
+// rotorAngle (degrees) spins the main and tail rotors.
+// cockpitView: leave out the cabin (the camera is inside it).
+void drawHelicopter(const Renderer& r, const Primitives& p, const Mat4& base, float rotorAngle,
+                    bool cockpitView = false);
+
+// ---- Rocket ----------------------------------------------------------------------
+
+// Landing legs of a rocket stage, hinged on the side of the body.
+struct LegGeometry
+{
+    int count;
+    float firstAngle;    // around the body (degrees)
+    float hingeRadius, hingeY, length, footSize;
+};
+constexpr float LEG_DEPLOY_ANGLE = 150.0f;       // swing out and down when deployed
+constexpr float COS_LEG_DEPLOY   = -0.8660254f;  // cos(150 deg)
+// The second (upper) stage uses the same frame as the whole rocket; its own
+// engine exit is at this height above the first stage's nozzle.
+constexpr float UPPER_STAGE_BOTTOM = 6.4f;
+
+constexpr LegGeometry CORE_LEGS    = {4, 0.0f,  0.80f, 2.3f, 2.9f, 0.45f};   // parked rockets
+constexpr LegGeometry UPPER_LEGS   = {4, 45.0f, 0.64f, UPPER_STAGE_BOTTOM + 1.2f, 2.2f, 0.35f};
+
+// Height of the feet below the model origin with the legs deployed
+// (hinge + leg reaching down, minus half the foot pad). Negative = below.
+constexpr float legFootY(const LegGeometry& g) { return g.hingeY + g.length * COS_LEG_DEPLOY - 0.05f; }
+
+// Whether the boosters are still attached, how strongly each engine burns
+// (0..1) and how far the landing legs are deployed (0..1).
+struct RocketLook
+{
+    bool boosters = true;
+    float mainFlame = 0, boosterFlame = 0, legs = 0;
+};
+
+// The whole rocket (both stages, plus the boosters if attached), standing
+// upright along +Y. Origin at the bottom of the first stage's engine nozzle.
+void drawRocket(const Renderer& r, const Primitives& p, const Mat4& base, const RocketLook& look = {});
+
+// Separable stages, in the whole rocket's frame (origin at the first stage's nozzle).
+void drawRocketFirstStage(const Renderer& r, const Primitives& p, const Mat4& base, float thrust, float legs);
+void drawRocketUpperStage(const Renderer& r, const Primitives& p, const Mat4& base, float thrust, float legs);
+
+// Side boosters (drawn on their own after separation). Origin at the bottom of the booster.
+Mat4 rocketBoosterMatrix(const Mat4& rocketBase, int index);   // index 0 (+X side) or 1 (-X side)
+void drawRocketBooster(const Renderer& r, const Primitives& p, const Mat4& booster, float thrust);
+
+// Heights used to rest each model on the ground (y = 0).
+constexpr float AIRPLANE_GROUND_OFFSET   = 1.78f;
+constexpr float HELICOPTER_GROUND_OFFSET = 1.52f;
+constexpr float ROCKET_GROUND_OFFSET     = 0.0f;
